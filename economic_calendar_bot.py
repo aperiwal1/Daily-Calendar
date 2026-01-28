@@ -39,18 +39,31 @@ logger = logging.getLogger(__name__)
 # ============= PROMPT =============
 PROMPT_TEMPLATE = """Search for {tomorrow_date}'s US and Canada economic calendar and earnings.
 
-SEARCH STRATEGY (do all 3 searches):
+SEARCH STRATEGY (do all searches):
 1. Search: "US economic calendar {tomorrow_date_short}"
 2. Search: "Canada economic calendar {tomorrow_date_short}" OR "StatCan releases {tomorrow_date_short}"
 3. Search: "earnings calendar {tomorrow_date_short}" - use Nasdaq.com/market-activity/earnings
+4. Search: "TMX earnings calendar {tomorrow_date_short}" OR "TSX earnings {tomorrow_date_short}" for Canadian earnings
+
+PRIORITY WATCHLIST - MUST CHECK EACH ONE:
+These tickers MUST be checked for earnings on {tomorrow_date_short}. If any are reporting, include them.
+
+US Tickers (check on Nasdaq.com):
+TSLA, NVDA, AMZN, AAPL, META, MSFT, PLTR, GOOG, GOOGL, AMD, IREN, SOFI, NFLX, MSTR, BRK.B, RKLB, AVGO, TSM, MU, HOOD, NBIS, ASTS
+
+Canadian Tickers (check on TMXMoney.com or Yahoo Finance with .TO suffix):
+ENB, SHOP, TD, RY, T, BNS, BCE, IAG, CNQ, CM, POW, BMO, DOL, CLS, PSLV, WCP, CSU, SU, SCZ, BN, CNR
+
+For Canadian tickers, search "[TICKER].TO earnings date" or "TMX [COMPANY NAME] earnings"
 
 EARNINGS VERIFICATION:
-- Use Nasdaq.com/market-activity/earnings as authority for timing
+- US: Use Nasdaq.com/market-activity/earnings as authority
+- Canada: Use TMXMoney.com or Yahoo Finance ([TICKER].TO)
 - "BMO" = Before Market, "AMC" = After Market
-- Tech giants (AAPL, AMZN, META, GOOGL, MSFT) almost always report AFTER close
-- ONLY include companies with market cap > $1 Billion
-- If a company's market cap is unknown or unclear, exclude it
+- Tech giants (AAPL, AMZN, META, GOOGL, MSFT, NVDA) almost always report AFTER close
+- ONLY include companies with market cap > $1 Billion (watchlist tickers are pre-qualified)
 - Sort earnings by market cap (largest first within each section)
+- Mark Canadian stocks with 🇨🇦 flag in earnings section
 
 OUTPUT THIS EXACT FORMAT:
 
@@ -62,8 +75,8 @@ OUTPUT THIS EXACT FORMAT:
 • [Time] ET: 🇨🇦 [Canada Event]
 
 *Earnings:*
-• Before Market: Company (TICKER), Company (TICKER)
-• After Market: Company (TICKER), Company (TICKER)
+• Before Market: Company (TICKER), 🇨🇦 Company (TICKER.TO)
+• After Market: Company (TICKER), 🇨🇦 Company (TICKER.TO)
 
 STRICT RULES:
 1. EVERY economic event gets its own bullet point - never combine multiple events on one line
@@ -74,9 +87,11 @@ STRICT RULES:
 6. If no earnings: • No major earnings scheduled
 7. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
 8. EARNINGS FILTER: Only companies with market cap > $1 Billion - exclude smaller companies
-9. Max 8 earnings per section (Before/After Market), sorted by market cap (largest first)
-10. Sort economic events by time
-11. Start with 📊 - no text before it
+9. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
+10. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
+11. Max 10 earnings per section (Before/After Market), sorted by market cap (largest first)
+12. Sort economic events by time
+13. Start with 📊 - no text before it
 
 EXAMPLE OUTPUT:
 📊 US & Canada Market Calendar - Thursday, Jan 29, 2026
@@ -89,8 +104,8 @@ EXAMPLE OUTPUT:
 • 10:00 ET: 🇺🇸 Pending Home Sales (Dec)
 
 *Earnings:*
-• Before Market: Mastercard (MA), Caterpillar (CAT)
-• After Market: Apple (AAPL), Visa (V), Intel (INTC)"""
+• Before Market: Mastercard (MA), 🇨🇦 Royal Bank (RY.TO)
+• After Market: Apple (AAPL), Microsoft (MSFT), 🇨🇦 Shopify (SHOP.TO)"""
 
 
 # ============= UTILITIES =============
