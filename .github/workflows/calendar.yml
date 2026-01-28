@@ -2,8 +2,7 @@ name: Economic Calendar Bot
 
 on:
   schedule:
-    # 4:55 PM ET = 21:55 UTC (standard time) or 20:55 UTC (daylight saving)
-    # Using 21:55 UTC - adjust if needed for daylight saving
+    # Run at 21:55 UTC (4:55 PM ET standard time, 5:55 PM ET daylight saving)
     - cron: '55 21 * * 1-5'
   
   # Allow manual trigger for testing
@@ -14,6 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Log current time (UTC & New York)
+        run: |
+          echo "UTC now:      $(date -u '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "New York now: $(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')"
+
+      - name: Set New York date env
+        run: echo "DATE_NY=$(TZ='America/New_York' date +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - name: Skip if weekend in New York
+        run: |
+          NY_DOW=$(TZ="America/New_York" date +'%u')
+          echo "NY Day of Week: ${NY_DOW} (1=Mon, 7=Sun)"
+          if [ "$NY_DOW" -gt 5 ]; then
+            echo "Weekend — skipping."
+            exit 0
+          fi
+          echo "Weekday — continuing."
+
       - name: Checkout repository
         uses: actions/checkout@v4
       
