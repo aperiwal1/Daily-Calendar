@@ -56,14 +56,22 @@ ENB, SHOP, TD, RY, T, BNS, BCE, IAG, CNQ, CM, POW, BMO, DOL, CLS, PSLV, WCP, CSU
 
 For Canadian tickers, search "[TICKER].TO earnings date" or "TMX [COMPANY NAME] earnings"
 
-EARNINGS VERIFICATION:
-- US: Use Nasdaq.com/market-activity/earnings as authority
-- Canada: Use TMXMoney.com or Yahoo Finance ([TICKER].TO)
+EARNINGS SEARCH STRATEGY:
+1. Search: "Nasdaq earnings calendar {tomorrow_date_short}" - this shows market cap for each company
+2. Search: "site:nasdaq.com/market-activity/earnings {tomorrow_date_short}"
+3. Search: "TMX earnings calendar {tomorrow_date_short}" for Canadian stocks
+4. Include ALL companies with market cap > $1 Billion - aim for 10-15 companies per section if available
+5. Do NOT be conservative - if a $1B+ company appears on any earnings calendar for this date, include it
+
+EARNINGS RULES:
+- US: Nasdaq.com/market-activity/earnings is the authority (shows market cap)
+- Canada: TMXMoney.com or Yahoo Finance ([TICKER].TO)
 - "BMO" = Before Market, "AMC" = After Market
 - Tech giants (AAPL, AMZN, META, GOOGL, MSFT, NVDA) almost always report AFTER close
-- ONLY include companies with market cap > $1 Billion (watchlist tickers are pre-qualified)
-- Sort earnings by market cap (largest first within each section)
-- Mark Canadian stocks with 🇨🇦 flag in earnings section
+- List ALL companies > $1B market cap, not just the top few
+- Sort by market cap (largest first)
+- Mark Canadian stocks with 🇨🇦 flag
+- Watchlist tickers are pre-qualified - always include if reporting
 
 OUTPUT THIS EXACT FORMAT:
 
@@ -86,10 +94,10 @@ STRICT RULES:
 5. If no economic data: • No major releases scheduled
 6. If no earnings: • No major earnings scheduled
 7. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
-8. EARNINGS FILTER: Only companies with market cap > $1 Billion - exclude smaller companies
+8. EARNINGS: Include ALL companies > $1B market cap reporting that day (aim for 10-15 per section)
 9. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
 10. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
-11. Max 10 earnings per section (Before/After Market), sorted by market cap (largest first)
+11. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
 12. Sort economic events by time
 13. Start with 📊 - no text before it
 
