@@ -88,33 +88,32 @@ OUTPUT THIS EXACT FORMAT:
 
 STRICT RULES:
 1. EVERY economic event gets its own bullet point - never combine multiple events on one line
-2. EVERY economic event MUST have a country flag: 🇺🇸 for US, 🇨🇦 for Canada - NO EXCEPTIONS
-3. SORT ECONOMIC DATA BY TIME - earliest first (08:30 before 09:45 before 10:00) - THIS IS MANDATORY
-4. Output ONLY the formatted calendar - no preamble, notes, explanations, sources
-5. Search for Canada data (StatCan, BoC) - if none scheduled, don't include any
-6. If no economic data: • No major releases scheduled
-7. If no earnings: • No major earnings scheduled
-8. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
-9. EARNINGS: Include ALL companies > $1B market cap reporting that day (aim for 10-15 per section)
-10. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
-11. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
-12. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
-13. Sort economic events by time STRICTLY ASCENDING (e.g., 08:30, 08:30, 09:45, 10:00, 11:45)
-14. Start with 📊 - no text before it
+2. EVERY economic event MUST have a country flag: 🇺🇸 for US, 🇨🇦 for Canada
+3. Output ONLY the formatted calendar - no preamble, notes, explanations, sources
+4. Search for Canada data (StatCan, BoC) - if none scheduled, don't include any
+5. If no economic data: • No major releases scheduled
+6. If no earnings: • No major earnings scheduled
+7. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
+8. EARNINGS: Include ALL companies > $1B market cap reporting that day (aim for 10-15 per section)
+9. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
+10. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
+11. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
+12. Sort economic events by time
+13. Start with 📊 - no text before it
 
-EXAMPLE OUTPUT (note time order and flags):
-📊 US & Canada Market Calendar - Friday, Jan 30, 2026
+EXAMPLE OUTPUT:
+📊 US & Canada Market Calendar - Thursday, Jan 29, 2026
 
 *Economic Data:*
-• 08:30 ET: 🇺🇸 PPI (Dec)
+• 08:30 ET: 🇺🇸 GDP Q4 Advance
+• 08:30 ET: 🇺🇸 Initial Jobless Claims
+• 08:30 ET: 🇺🇸 PCE Price Index (Dec)
 • 08:30 ET: 🇨🇦 GDP (Nov)
-• 09:45 ET: 🇺🇸 Chicago PMI (Jan)
 • 10:00 ET: 🇺🇸 Pending Home Sales (Dec)
-• 11:45 ET: 🇺🇸 NY Fed Staff Nowcast
 
 *Earnings:*
-• Before Market: Exxon Mobil (XOM), Chevron (CVX), Verizon (VZ)
-• After Market: Apple (AAPL), 🇨🇦 Shopify (SHOP.TO)"""
+• Before Market: Mastercard (MA), 🇨🇦 Royal Bank (RY.TO)
+• After Market: Apple (AAPL), Microsoft (MSFT), 🇨🇦 Shopify (SHOP.TO)"""
 
 
 # ============= UTILITIES =============
