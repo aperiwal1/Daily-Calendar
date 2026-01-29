@@ -2,8 +2,8 @@ name: Economic Calendar Bot
 
 on:
   schedule:
-    # Run at 21:55 UTC (4:55 PM ET standard time, 5:55 PM ET daylight saving)
-    - cron: '55 21 * * 1-5'
+    # Run at 21:55 UTC (4:45 PM ET standard time, 5:45 PM ET daylight saving)
+    - cron: '45 21 * * 1-5'
   
   # Allow manual trigger for testing
   workflow_dispatch:
