@@ -25,6 +25,14 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 CACHE_FILE = Path("last_calendar.json")
 REQUEST_TIMEOUT = 30
 
+# Priority watchlist tickers to bold in output
+WATCHLIST_US = ["TSLA", "NVDA", "AMZN", "AAPL", "META", "MSFT", "PLTR", "GOOG", "GOOGL", 
+                "AMD", "IREN", "SOFI", "NFLX", "MSTR", "BRK.B", "RKLB", "AVGO", "TSM", 
+                "MU", "HOOD", "NBIS", "ASTS"]
+WATCHLIST_CAD = ["ENB", "SHOP", "TD", "RY", "T", "BNS", "BCE", "IAG", "CNQ", "CM", 
+                 "POW", "BMO", "DOL", "CLS", "PSLV", "WCP", "CSU", "SU", "SCZ", "BN", "CNR"]
+WATCHLIST_ALL = WATCHLIST_US + WATCHLIST_CAD + [f"{t}.TO" for t in WATCHLIST_CAD]
+
 # ============= LOGGING =============
 logging.basicConfig(
     level=logging.INFO,
@@ -173,6 +181,20 @@ def get_next_trading_day() -> datetime:
     return next_day
 
 
+def bold_watchlist_tickers(text: str) -> str:
+    """Bold any watchlist tickers in the calendar text for Slack."""
+    import re
+    
+    for ticker in WATCHLIST_ALL:
+        # Match ticker in parentheses: (AAPL) or (SHOP.TO)
+        # Avoid double-bolding if already bolded
+        pattern = rf'\((?<!\*)({re.escape(ticker)})(?!\*)\)'
+        replacement = rf'(*\1*)'
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    
+    return text
+
+
 def validate_calendar(text: str) -> tuple[bool, str | None]:
     """Validate that the calendar response has expected structure."""
     if not text:
@@ -280,6 +302,9 @@ def get_tomorrow_calendar() -> str | None:
     
     # Convert markdown bold (**) to Slack bold (*)
     calendar_text = calendar_text.replace("**", "*")
+    
+    # Bold watchlist tickers
+    calendar_text = bold_watchlist_tickers(calendar_text)
     
     # Validate response
     is_valid, error = validate_calendar(calendar_text)
