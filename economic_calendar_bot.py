@@ -37,13 +37,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============= PROMPT =============
-PROMPT_TEMPLATE = """Search for {tomorrow_date}'s US and Canada economic calendar and earnings.
+PROMPT_TEMPLATE = """
+CRITICAL CONTEXT:
+- Today is {today_date} ({today_weekday})
+- You are searching for: {tomorrow_date_short} ({tomorrow_weekday})
+- If today is Friday, you are looking for MONDAY's calendar - search accordingly
+
+Search for {tomorrow_date}'s US and Canada economic calendar and earnings.
 
 SEARCH STRATEGY (do all searches):
-1. Search: "US economic calendar {tomorrow_date_short}"
-2. Search: "Canada economic calendar {tomorrow_date_short}" OR "StatCan releases {tomorrow_date_short}"
-3. Search: "earnings calendar {tomorrow_date_short}" - use Nasdaq.com/market-activity/earnings
-4. Search: "TMX earnings calendar {tomorrow_date_short}" OR "TSX earnings {tomorrow_date_short}" for Canadian earnings
+1. Search: "US economic calendar {tomorrow_date_search}"
+2. Search: "Canada economic calendar {tomorrow_date_search}" OR "StatCan releases {tomorrow_date_search}"
+3. Search: "Nasdaq earnings calendar {tomorrow_date_search}"
+4. Search: "TMX earnings calendar {tomorrow_date_search}" for Canadian earnings
 
 PRIORITY WATCHLIST - MUST CHECK EACH ONE:
 These tickers MUST be checked for earnings on {tomorrow_date_short}. If any are reporting, include them.
@@ -57,9 +63,9 @@ ENB, SHOP, TD, RY, T, BNS, BCE, IAG, CNQ, CM, POW, BMO, DOL, CLS, PSLV, WCP, CSU
 For Canadian tickers, search "[TICKER].TO earnings date" or "TMX [COMPANY NAME] earnings"
 
 EARNINGS SEARCH STRATEGY:
-1. Search: "Nasdaq earnings calendar {tomorrow_date_short}" - this shows market cap for each company
-2. Search: "site:nasdaq.com/market-activity/earnings {tomorrow_date_short}"
-3. Search: "TMX earnings calendar {tomorrow_date_short}" for Canadian stocks
+1. Search: "Nasdaq earnings calendar {tomorrow_date_search}" - this shows market cap for each company
+2. Search: "site:nasdaq.com/market-activity/earnings {tomorrow_date_search}"
+3. Search: "TMX earnings calendar {tomorrow_date_search}" for Canadian stocks
 4. Include ALL companies with market cap > $1 Billion - aim for 10-15 companies per section if available
 5. Do NOT be conservative - if a $1B+ company appears on any earnings calendar for this date, include it
 
@@ -73,12 +79,18 @@ EARNINGS RULES:
 - Mark Canadian stocks with 🇨🇦 flag
 - Watchlist tickers are pre-qualified - always include if reporting
 
+VALIDATION CHECK - READ THIS:
+- Mondays typically have 5+ earnings from $1B+ companies - an empty Monday is almost NEVER correct
+- First trading day of the month usually has ISM Manufacturing PMI at 10:00 AM ET
+- If your initial search returns "no major releases" or "no earnings", SEARCH AGAIN with different queries
+- Try: "earnings reports {tomorrow_date_search}", "companies reporting earnings {tomorrow_date_search}"
+- Check PLTR, GOOG, AMD, DIS specifically if searching for a Monday in early February
+
 OUTPUT THIS EXACT FORMAT:
 
 📊 US & Canada Market Calendar - {tomorrow_date_short}
 
 *Economic Data:*
-• [Time] ET: 🇺🇸 [US Event]
 • [Time] ET: 🇺🇸 [US Event]
 • [Time] ET: 🇨🇦 [Canada Event]
 
@@ -88,32 +100,30 @@ OUTPUT THIS EXACT FORMAT:
 
 STRICT RULES:
 1. EVERY economic event gets its own bullet point - never combine multiple events on one line
-2. EVERY economic event MUST have a country flag: 🇺🇸 for US, 🇨🇦 for Canada
-3. Output ONLY the formatted calendar - no preamble, notes, explanations, sources
-4. Search for Canada data (StatCan, BoC) - if none scheduled, don't include any
-5. If no economic data: • No major releases scheduled
-6. If no earnings: • No major earnings scheduled
-7. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
-8. EARNINGS: Include ALL companies > $1B market cap reporting that day (aim for 10-15 per section)
-9. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
-10. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
-11. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
-12. Sort economic events by time
-13. Start with 📊 - no text before it
+2. EVERY economic event MUST have a country flag: 🇺🇸 for US, 🇨🇦 for Canada - NO EXCEPTIONS
+3. SORT ECONOMIC DATA BY TIME - earliest first (08:30 before 09:45 before 10:00) - THIS IS MANDATORY
+4. Output ONLY the formatted calendar - no preamble, notes, explanations, sources
+5. Search for Canada data (StatCan, BoC) - if none scheduled, don't include any
+6. If genuinely no economic data after multiple searches: • No major releases scheduled
+7. If genuinely no earnings after multiple searches: • No major earnings scheduled
+8. Use abbreviations: CPI, PPI, GDP, PCE, PMI, BoC, FOMC
+9. EARNINGS: Include ALL companies > $1B market cap reporting that day (aim for 10-15 per section)
+10. WATCHLIST PRIORITY: Always check and include watchlist tickers if reporting - never miss these
+11. Canadian earnings: Add 🇨🇦 flag before company name and use .TO suffix
+12. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
+13. Sort economic events by time STRICTLY ASCENDING (e.g., 08:30, 08:30, 09:45, 10:00, 11:45)
+14. Start with 📊 - no text before it
 
-EXAMPLE OUTPUT:
-📊 US & Canada Market Calendar - Thursday, Jan 29, 2026
+EXAMPLE OUTPUT (note time order and flags):
+📊 US & Canada Market Calendar - Monday, Feb 02, 2026
 
 *Economic Data:*
-• 08:30 ET: 🇺🇸 GDP Q4 Advance
-• 08:30 ET: 🇺🇸 Initial Jobless Claims
-• 08:30 ET: 🇺🇸 PCE Price Index (Dec)
-• 08:30 ET: 🇨🇦 GDP (Nov)
-• 10:00 ET: 🇺🇸 Pending Home Sales (Dec)
+• 10:00 ET: 🇺🇸 ISM Manufacturing PMI (Jan)
+• 10:00 ET: 🇺🇸 Construction Spending (Dec)
 
 *Earnings:*
-• Before Market: Mastercard (MA), 🇨🇦 Royal Bank (RY.TO)
-• After Market: Apple (AAPL), Microsoft (MSFT), 🇨🇦 Shopify (SHOP.TO)"""
+• Before Market: Palantir (PLTR), Toyota (TM), Clorox (CLX)
+• After Market: Alphabet (GOOG), AMD (AMD), Disney (DIS), Amgen (AMGN)"""
 
 
 # ============= UTILITIES =============
@@ -222,18 +232,26 @@ def get_tomorrow_calendar() -> str | None:
     
     today = datetime.now()
     tomorrow = get_next_trading_day()
+    
+    # Multiple date formats for different purposes
     today_str = today.strftime("%A, %B %d, %Y")
+    today_weekday = today.strftime("%A")
     tomorrow_str = tomorrow.strftime("%A, %B %d, %Y")
-    tomorrow_short = tomorrow.strftime("%A, %b %d, %Y")  # "Wednesday, Jan 28, 2026"
+    tomorrow_weekday = tomorrow.strftime("%A")
+    tomorrow_short = tomorrow.strftime("%A, %b %d, %Y")  # "Monday, Feb 02, 2026"
+    tomorrow_search = tomorrow.strftime("%B %d %Y")  # "February 02 2026" - better for search
     
     prompt = PROMPT_TEMPLATE.format(
-        today_date=today_str, 
+        today_date=today_str,
+        today_weekday=today_weekday,
         tomorrow_date=tomorrow_str,
-        tomorrow_date_short=tomorrow_short
+        tomorrow_weekday=tomorrow_weekday,
+        tomorrow_date_short=tomorrow_short,
+        tomorrow_date_search=tomorrow_search
     )
     
-    logger.info(f"Today: {today_str}")
-    logger.info(f"Fetching calendar for: {tomorrow_str}")
+    logger.info(f"Today: {today_str} ({today_weekday})")
+    logger.info(f"Fetching calendar for: {tomorrow_str} ({tomorrow_weekday})")
     
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
