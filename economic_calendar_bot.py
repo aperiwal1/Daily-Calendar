@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -24,6 +25,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 CACHE_FILE = Path("last_calendar.json")
 REQUEST_TIMEOUT = 30
+MAX_CONTENT_RETRIES = 2  # Retries specifically for lazy/bad content
 
 # Priority watchlist tickers to bold in output
 WATCHLIST_US = ["TSLA", "NVDA", "AMZN", "AAPL", "META", "MSFT", "PLTR", "GOOG", "GOOGL", 
@@ -32,6 +34,26 @@ WATCHLIST_US = ["TSLA", "NVDA", "AMZN", "AAPL", "META", "MSFT", "PLTR", "GOOG", 
 WATCHLIST_CAD = ["ENB", "SHOP", "TD", "RY", "T", "BNS", "BCE", "IAG", "CNQ", "CM", 
                  "POW", "BMO", "DOL", "CLS", "PSLV", "WCP", "CSU", "SU", "SCZ", "BN", "CNR"]
 WATCHLIST_ALL = WATCHLIST_US + WATCHLIST_CAD + [f"{t}.TO" for t in WATCHLIST_CAD]
+
+# Phrases that indicate the model was lazy instead of listing specifics
+LAZY_PHRASES = [
+    "multiple companies scheduled",
+    "total earnings expected",
+    "various companies",
+    "several companies",
+    "numerous companies",
+    "companies are scheduled",
+    "companies scheduled",
+    "earnings are expected",
+    "companies reporting",
+    "additional companies",
+    "and others",
+    "and more",
+    "among others",
+    "plus more",
+    "many companies",
+    "dozens of companies",
+]
 
 # ============= LOGGING =============
 logging.basicConfig(
@@ -58,6 +80,33 @@ SEARCH STRATEGY (do all searches):
 2. Search: "Canada economic calendar {tomorrow_date_search}" OR "StatCan releases {tomorrow_date_search}"
 3. Search: "Nasdaq earnings calendar {tomorrow_date_search}"
 4. Search: "TMX earnings calendar {tomorrow_date_search}" for Canadian earnings
+
+═══════════════════════════════════════════════════
+KNOWN RECURRING ECONOMIC EVENTS - USE AS A CHECKLIST
+═══════════════════════════════════════════════════
+Cross-reference your search results against these. If the target date falls on the matching weekday, VERIFY whether these are scheduled:
+
+WEEKLY (almost every week):
+• Thursday 08:30 ET: 🇺🇸 Initial Jobless Claims — THIS IS WEEKLY, EVERY THURSDAY. If {tomorrow_weekday} is Thursday, this MUST appear unless it's a holiday.
+• Wednesday 10:30 ET: 🇺🇸 EIA Crude Oil Inventories
+• Monday 15:00 ET: 🇺🇸 Treasury International Capital (TIC) data (monthly but released on a Monday)
+
+MONTHLY (check if date matches):
+• First Friday: 🇺🇸 Nonfarm Payrolls & Unemployment Rate (08:30 ET)
+• First business day: 🇺🇸 ISM Manufacturing PMI (10:00 ET)
+• Third business day: 🇺🇸 ISM Services PMI (10:00 ET)
+• ~10th-15th: 🇺🇸 CPI (08:30 ET), 🇺🇸 PPI (08:30 ET)
+• ~15th: 🇺🇸 Retail Sales (08:30 ET)
+• ~20th: 🇨🇦 CPI (08:30 ET)
+• ~25th-28th: 🇺🇸 GDP (08:30 ET), 🇺🇸 PCE Price Index (08:30 ET), 🇺🇸 Durable Goods (08:30 ET)
+• Mid-month: 🇺🇸 Industrial Production (09:15 ET), 🇺🇸 Housing Starts & Building Permits (08:30 ET)
+• Various: 🇺🇸 Philadelphia Fed Manufacturing Index (Thursday, 08:30 ET, third week)
+• Various: 🇺🇸 Michigan Consumer Sentiment (Friday, 10:00 ET, mid/end month)
+• Various: 🇨🇦 GDP (end of month), 🇨🇦 Employment (first Friday after US NFP)
+• 8 times/year: 🇺🇸 FOMC Rate Decision (14:00 ET), 🇨🇦 BoC Rate Decision (10:00 ET)
+
+This checklist is a HINT, not a guarantee. Always verify with your search results. But if it's Thursday and Jobless Claims doesn't appear in your output, something is WRONG — search again.
+═══════════════════════════════════════════════════
 
 PRIORITY WATCHLIST - MUST CHECK EACH ONE:
 These tickers MUST be checked for earnings on {tomorrow_date_short}. If any are reporting, include them.
@@ -87,12 +136,28 @@ EARNINGS RULES:
 - Mark Canadian stocks with 🇨🇦 flag
 - Watchlist tickers are pre-qualified - always include if reporting
 
+═══════════════════════════════════════════════════
+ABSOLUTE RULES — VIOLATIONS WILL BE REJECTED
+═══════════════════════════════════════════════════
+NEVER use summary or placeholder language for earnings. These phrases are BANNED:
+- "Multiple companies scheduled"
+- "X total earnings expected"
+- "Various/several/numerous companies"
+- "Companies are scheduled"
+- "And others" / "and more" / "among others" / "plus more"
+- ANY form of summarizing instead of listing actual company names
+
+You MUST list each company by name and ticker, or say "No major earnings scheduled".
+There is NO middle ground. Summarizing = failure.
+═══════════════════════════════════════════════════
+
 VALIDATION CHECK - READ THIS:
 - Mondays typically have 5+ earnings from $1B+ companies - an empty Monday is almost NEVER correct
 - First trading day of the month usually has ISM Manufacturing PMI at 10:00 AM ET
 - If your initial search returns "no major releases" or "no earnings", SEARCH AGAIN with different queries
 - Try: "earnings reports {tomorrow_date_search}", "companies reporting earnings {tomorrow_date_search}"
 - Check PLTR, GOOG, AMD, DIS specifically if searching for a Monday in early February
+- If it's Thursday and Initial Jobless Claims is missing — you made an error, search again
 
 OUTPUT THIS EXACT FORMAT:
 
@@ -121,16 +186,19 @@ STRICT RULES:
 12. Max 15 earnings per section (Before/After Market), sorted by market cap (largest first)
 13. Sort economic events by time STRICTLY ASCENDING (e.g., 08:30, 08:30, 09:45, 10:00, 11:45)
 14. Start with 📊 - no text before it
+15. List SPECIFIC company names and tickers for earnings — NEVER summarize or use placeholder counts
+16. If you cannot find specific earnings names, say "No major earnings scheduled" — do NOT fabricate or summarize
 
 EXAMPLE OUTPUT (note time order and flags):
 📊 US & Canada Market Calendar - Monday, Feb 02, 2026
 
 *Economic Data:*
+• 08:30 ET: 🇺🇸 Initial Jobless Claims (week ending Jan 24)
 • 10:00 ET: 🇺🇸 ISM Manufacturing PMI (Jan)
 • 10:00 ET: 🇺🇸 Construction Spending (Dec)
 
 *Earnings:*
-• Before Market: Palantir (PLTR), Toyota (TM), Clorox (CLX)
+• Before Market: Palantir (PLTR), Toyota (TM), Clorox (CLX), 🇨🇦 Royal Bank (RY.TO)
 • After Market: Alphabet (GOOG), AMD (AMD), Disney (DIS), Amgen (AMGN)"""
 
 
@@ -183,8 +251,6 @@ def get_next_trading_day() -> datetime:
 
 def bold_watchlist_tickers(text: str) -> str:
     """Bold any watchlist tickers in the calendar text for Slack."""
-    import re
-    
     for ticker in WATCHLIST_ALL:
         # Match ticker in parentheses: (AAPL) or (SHOP.TO)
         # Avoid double-bolding if already bolded
@@ -193,6 +259,21 @@ def bold_watchlist_tickers(text: str) -> str:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     
     return text
+
+
+def contains_lazy_content(text: str) -> tuple[bool, str | None]:
+    """Check if the response contains lazy summary language instead of specifics."""
+    text_lower = text.lower()
+    for phrase in LAZY_PHRASES:
+        if phrase in text_lower:
+            return True, phrase
+    
+    # Check for patterns like "160 total earnings" or "200+ companies"
+    count_pattern = re.search(r'\d+\s*(total|companies|earnings)\s*(expected|scheduled|reporting)', text_lower)
+    if count_pattern:
+        return True, count_pattern.group(0)
+    
+    return False, None
 
 
 def validate_calendar(text: str) -> tuple[bool, str | None]:
@@ -219,6 +300,11 @@ def validate_calendar(text: str) -> tuple[bool, str | None]:
     for phrase in unwanted:
         if phrase.lower() in text.lower():
             return False, f"Contains unwanted explanatory text: '{phrase}'"
+    
+    # Check for lazy summary language
+    is_lazy, lazy_phrase = contains_lazy_content(text)
+    if is_lazy:
+        return False, f"Contains lazy summary language: '{lazy_phrase}'"
     
     return True, None
 
@@ -247,33 +333,9 @@ def load_from_cache() -> dict | None:
 
 
 # ============= CORE FUNCTIONS =============
-@retry_with_backoff(max_retries=3, base_delay=2, exceptions=(anthropic.APIError, anthropic.APIConnectionError))
-def get_tomorrow_calendar() -> str | None:
-    """Fetch tomorrow's economic calendar using Claude API."""
+def _call_claude_api(prompt: str) -> str | None:
+    """Make a single Claude API call and return cleaned text."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    
-    today = datetime.now()
-    tomorrow = get_next_trading_day()
-    
-    # Multiple date formats for different purposes
-    today_str = today.strftime("%A, %B %d, %Y")
-    today_weekday = today.strftime("%A")
-    tomorrow_str = tomorrow.strftime("%A, %B %d, %Y")
-    tomorrow_weekday = tomorrow.strftime("%A")
-    tomorrow_short = tomorrow.strftime("%A, %b %d, %Y")  # "Monday, Feb 02, 2026"
-    tomorrow_search = tomorrow.strftime("%B %d %Y")  # "February 02 2026" - better for search
-    
-    prompt = PROMPT_TEMPLATE.format(
-        today_date=today_str,
-        today_weekday=today_weekday,
-        tomorrow_date=tomorrow_str,
-        tomorrow_weekday=tomorrow_weekday,
-        tomorrow_date_short=tomorrow_short,
-        tomorrow_date_search=tomorrow_search
-    )
-    
-    logger.info(f"Today: {today_str} ({today_weekday})")
-    logger.info(f"Fetching calendar for: {tomorrow_str} ({tomorrow_weekday})")
     
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -306,18 +368,60 @@ def get_tomorrow_calendar() -> str | None:
     # Bold watchlist tickers
     calendar_text = bold_watchlist_tickers(calendar_text)
     
-    # Validate response
-    is_valid, error = validate_calendar(calendar_text)
-    if not is_valid:
-        logger.error(f"Calendar validation failed: {error}")
-        return None
-    
-    logger.info(f"Calendar fetched successfully ({len(calendar_text)} chars)")
-    
-    # Cache successful result
-    save_to_cache(calendar_text, tomorrow_str)
-    
     return calendar_text
+
+
+@retry_with_backoff(max_retries=3, base_delay=2, exceptions=(anthropic.APIError, anthropic.APIConnectionError))
+def get_tomorrow_calendar() -> str | None:
+    """Fetch tomorrow's economic calendar using Claude API with content quality retries."""
+    today = datetime.now()
+    tomorrow = get_next_trading_day()
+    
+    # Multiple date formats for different purposes
+    today_str = today.strftime("%A, %B %d, %Y")
+    today_weekday = today.strftime("%A")
+    tomorrow_str = tomorrow.strftime("%A, %B %d, %Y")
+    tomorrow_weekday = tomorrow.strftime("%A")
+    tomorrow_short = tomorrow.strftime("%A, %b %d, %Y")
+    tomorrow_search = tomorrow.strftime("%B %d %Y")
+    
+    prompt = PROMPT_TEMPLATE.format(
+        today_date=today_str,
+        today_weekday=today_weekday,
+        tomorrow_date=tomorrow_str,
+        tomorrow_weekday=tomorrow_weekday,
+        tomorrow_date_short=tomorrow_short,
+        tomorrow_date_search=tomorrow_search
+    )
+    
+    logger.info(f"Today: {today_str} ({today_weekday})")
+    logger.info(f"Fetching calendar for: {tomorrow_str} ({tomorrow_weekday})")
+    
+    # Try up to MAX_CONTENT_RETRIES+1 times for quality content
+    last_error = None
+    for attempt in range(MAX_CONTENT_RETRIES + 1):
+        if attempt > 0:
+            logger.warning(f"Content quality retry {attempt}/{MAX_CONTENT_RETRIES} (reason: {last_error})")
+        
+        calendar_text = _call_claude_api(prompt)
+        
+        if not calendar_text:
+            last_error = "Empty response from API"
+            continue
+        
+        # Validate response
+        is_valid, error = validate_calendar(calendar_text)
+        if is_valid:
+            logger.info(f"Calendar fetched successfully ({len(calendar_text)} chars) on attempt {attempt + 1}")
+            save_to_cache(calendar_text, tomorrow_str)
+            return calendar_text
+        else:
+            last_error = error
+            logger.warning(f"Calendar validation failed on attempt {attempt + 1}: {error}")
+    
+    # All retries exhausted — log but return last attempt if it exists
+    logger.error(f"All {MAX_CONTENT_RETRIES + 1} content attempts failed. Last error: {last_error}")
+    return None
 
 
 @retry_with_backoff(max_retries=3, base_delay=1, exceptions=(requests.RequestException,))
