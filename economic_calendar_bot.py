@@ -49,7 +49,7 @@ WATCHLIST = set(WATCHLIST_US + WATCHLIST_CAD)
 
 # Earnings config
 MIN_MARKET_CAP = 1_000_000_000  # $1B
-MAX_PER_SECTION = 15
+MAX_PER_SECTION = 6
 
 # ============= LOGGING =============
 logging.basicConfig(
@@ -259,11 +259,21 @@ def fetch_earnings(date_str: str) -> str:
         else:
             after_market.append((sort_key, entry))
 
-    # Sort by market cap descending, take top N
+    # Sort by market cap descending
     before_market.sort(key=lambda x: x[0], reverse=True)
     after_market.sort(key=lambda x: x[0], reverse=True)
-    before_market = [e for _, e in before_market[:MAX_PER_SECTION]]
-    after_market = [e for _, e in after_market[:MAX_PER_SECTION]]
+
+    # Take top N, but force-include watchlist tickers that didn't make the cut
+    def top_with_watchlist(items):
+        top = items[:MAX_PER_SECTION]
+        top_entries = {e for _, e in top}
+        for _, entry in items[MAX_PER_SECTION:]:
+            if entry.startswith("*") and entry not in top_entries:
+                top.append((0, entry))
+        return [e for _, e in top]
+
+    before_market = top_with_watchlist(before_market)
+    after_market = top_with_watchlist(after_market)
 
     # Log watchlist hits
     all_entries = before_market + after_market
