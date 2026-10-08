@@ -1,51 +1,152 @@
+# .github/workflows/calendar.yml
+#
+# Economic Calendar + Earnings Bot → Slack (posts the NEXT trading day's calendar)
+#
+# Triggers:
+#   - workflow_dispatch (PRIMARY): fired on time at 4:15 PM ET by cron-job.org
+#     (→ GitHub API), or manually from the Actions tab.
+#     Tick "force" on a manual run to bypass all gates (testing / re-post).
+#   - schedule (BACKUP ONLY): GitHub cron is best-effort and can run hours
+#     late. Two entries so one lands at 4:15 PM ET in both EDT and EST; the
+#     gates below skip the extra one.
+#
+# Gates (unless forced): Mon–Fri, inside the ET post window, and not already
+# posted today. A gate that fails skips every remaining step.
+
 name: Economic Calendar Bot
 
 on:
   schedule:
-    # Run at 21:55 UTC (4:15 PM ET standard time, 5:15 PM ET daylight saving)
-    - cron: '15 20 * * 1-5'
-  
-  # Allow manual trigger for testing
+    - cron: "15 20 * * 1-5"   # 4:15 PM EDT (Mar–Nov) | 3:15 PM EST → skipped by window
+    - cron: "15 21 * * 1-5"   # 4:15 PM EST (Nov–Mar) | 5:15 PM EDT → skipped if already posted
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Bypass all gates (weekend / time window / already posted)"
+        type: boolean
+        default: false
+
+# Queue instead of cancel: a backup run that starts while the on-time run is
+# still going waits for it to finish, then skips via the "already posted" gate.
+concurrency:
+  group: economic-calendar-bot
+  cancel-in-progress: false
+
+env:
+  POST_WINDOW_START: "16:00"   # ET — earliest post
+  POST_WINDOW_END: "23:00"     # ET — latest post if only a late backup run arrives
 
 jobs:
   post-calendar:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Log current time (UTC & New York)
+      - name: Log trigger and current time (UTC & New York)
         run: |
+          echo "Trigger:      ${{ github.event_name }}"
           echo "UTC now:      $(date -u '+%Y-%m-%d %H:%M:%S %Z')"
           echo "New York now: $(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')"
 
-      - name: Set New York date env
-        run: echo "DATE_NY=$(TZ='America/New_York' date +%Y-%m-%d)" >> $GITHUB_ENV
-
-      - name: Skip if weekend in New York
+      # ── Gate: weekday + post window ──
+      - name: Check weekday and post window
+        id: gate
         run: |
-          NY_DOW=$(TZ="America/New_York" date +'%u')
-          echo "NY Day of Week: ${NY_DOW} (1=Mon, 7=Sun)"
-          if [ "$NY_DOW" -gt 5 ]; then
-            echo "Weekend — skipping."
-            exit 0
-          fi
-          echo "Weekday — continuing."
+          python3 - <<'PY'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
 
+          def to_minutes(hhmm):
+              h, m = hhmm.split(":")
+              return int(h) * 60 + int(m)
+
+          now = datetime.now(ZoneInfo("America/New_York"))
+          start = os.environ["POST_WINDOW_START"]
+          end = os.environ["POST_WINDOW_END"]
+          now_min = now.hour * 60 + now.minute
+
+          if now.weekday() >= 5:
+              is_open, reason = False, "Weekend"
+          elif not (to_minutes(start) <= now_min <= to_minutes(end)):
+              is_open, reason = False, f"Outside {start}-{end} ET post window"
+          else:
+              is_open, reason = True, "Weekday, inside post window"
+
+          print(f"NY time {now:%Y-%m-%d %H:%M %Z}: {reason}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"open={'true' if is_open else 'false'}\n")
+              f.write(f"date_ny={now.date().isoformat()}\n")
+          PY
+
+      # ── Gate: already posted today ──
+      - name: Check if already posted today
+        id: posted_cache
+        if: steps.gate.outputs.open == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .post-cache-calendar
+          key: calendar-posted-${{ steps.gate.outputs.date_ny }}
+          lookup-only: true
+
+      - name: Decide whether to post
+        id: decide
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+          GATE_OPEN: ${{ steps.gate.outputs.open }}
+          ALREADY_POSTED: ${{ steps.posted_cache.outputs.cache-hit }}
+        run: |
+          if [ "$FORCE" = "true" ]; then
+            echo "Forced manual run — bypassing all gates."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GATE_OPEN" != "true" ]; then
+            echo "Gate closed — skipping (see previous step for reason)."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          elif [ "$ALREADY_POSTED" = "true" ]; then
+            echo "Already posted for ${{ steps.gate.outputs.date_ny }} — skipping."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "All gates passed — posting."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Everything below runs only if proceed == true ──
       - name: Checkout repository
+        if: steps.decide.outputs.proceed == 'true'
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
+        if: steps.decide.outputs.proceed == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      
+          python-version: "3.11"
+
       - name: Install dependencies
+        if: steps.decide.outputs.proceed == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
+
       - name: Run Economic Calendar Bot
+        if: steps.decide.outputs.proceed == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # The script uses datetime.now(); without this the runner's UTC clock
+          # makes any run after 8 PM ET compute "tomorrow" a day too far ahead.
+          TZ: America/New_York
         run: python economic_calendar_bot.py
+
+      # ── Mark posted only after the bot succeeds ──
+      - name: Mark posted today
+        if: steps.decide.outputs.proceed == 'true'
+        run: |
+          mkdir -p .post-cache-calendar
+          echo "posted $(date -u)" > .post-cache-calendar/posted.txt
+
+      - name: Save posted cache
+        if: steps.decide.outputs.proceed == 'true'
+        continue-on-error: true   # key already exists on a forced re-post — harmless
+        uses: actions/cache/save@v4
+        with:
+          path: .post-cache-calendar
+          key: calendar-posted-${{ steps.gate.outputs.date_ny }}
