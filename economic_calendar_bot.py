@@ -293,40 +293,97 @@ def fetch_earnings(date_str: str) -> str:
 
 
 # ============= ECONOMIC CALENDAR (Claude API) =============
+MAX_PAUSE_CONTINUATIONS = 5
+SEARCH_BLOCK_TYPES = ("server_tool_use", "web_search_tool_result")
+BULLET_PREFIXES = ("•", "- ", "* ")
+
+
+def _final_answer_text(content) -> str:
+    """Text written after the model's last web search — its final answer.
+
+    With web search the response interleaves text with search blocks; text
+    before the last search is the model narrating its work ("Let me search...")
+    and must not be posted.
+    """
+    last_search = max(
+        (i for i, block in enumerate(content) if block.type in SEARCH_BLOCK_TYPES),
+        default=-1,
+    )
+    final = "".join(b.text for b in content[last_search + 1:] if b.type == "text")
+    if final.strip():
+        return final
+    # No text after the last search: fall back to all text
+    return "".join(b.text for b in content if b.type == "text")
+
+
+def extract_economic_data(text: str) -> str | None:
+    """Keep only the LAST 'Economic Data:' section and its bullet lines.
+
+    Drops anything the model writes around it — reasoning ("Let me re-check..."),
+    earlier drafts of the list, and trailing "Sources/reasoning" notes.
+    """
+    # Convert markdown bold (**) to Slack bold (*)
+    text = text.replace("**", "*")
+
+    idx = text.rfind("Economic Data:")
+    if idx == -1:
+        return None
+    section = text[idx:].split("\n", 1)
+    body = section[1] if len(section) > 1 else ""
+
+    bullets, seen = [], set()
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            if bullets:
+                break  # blank line after the list ends it
+            continue
+        prefix = next((p for p in BULLET_PREFIXES if line.startswith(p)), None)
+        if prefix is None:
+            break  # first non-bullet line ends the list
+        item = "• " + line[len(prefix):].strip()
+        if item not in seen:
+            seen.add(item)
+            bullets.append(item)
+
+    if not bullets:
+        return None
+    return "*Economic Data:*\n" + "\n".join(bullets)
+
+
 def _call_claude_api(prompt: str) -> str | None:
-    """Make a single Claude API call and return cleaned text."""
+    """Make a Claude API call and return only the final Economic Data list."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    messages = [{"role": "user", "content": prompt}]
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1500,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": prompt}]
-    )
+    for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=messages
+        )
+        # Long web-search turns can pause; send the partial turn back to resume
+        if message.stop_reason != "pause_turn":
+            break
+        logger.info("Response paused mid-search — resuming")
+        messages.append({"role": "assistant", "content": message.content})
+    else:
+        logger.error(f"Still paused after {MAX_PAUSE_CONTINUATIONS} continuations")
+        return None
 
-    text = "".join(
-        block.text for block in message.content if block.type == "text"
-    )
+    if message.stop_reason == "max_tokens":
+        logger.warning("Response hit max_tokens — output may be truncated")
 
+    text = _final_answer_text(message.content)
     if not text:
         logger.error("No text content in API response")
         return None
 
-    # Clean up: find the Economic Data section
-    for marker in ["*Economic Data:*", "Economic Data:"]:
-        if marker in text:
-            idx = text.index(marker)
-            text = text[idx:]
-            break
-
-    # Ensure it starts correctly
-    if not text.startswith("*Economic Data:*"):
-        text = "*Economic Data:*\n" + text
-
-    # Convert markdown bold (**) to Slack bold (*)
-    text = text.replace("**", "*")
-
-    return text
+    econ = extract_economic_data(text)
+    if not econ:
+        logger.error(f"No Economic Data bullets found in response: {text[:300]!r}")
+    return econ
 
 
 @retry_with_backoff(max_retries=3, base_delay=2, exceptions=(anthropic.APIError, anthropic.APIConnectionError))
