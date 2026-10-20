@@ -4,7 +4,7 @@ Daily Economic Calendar + Earnings Bot
 Posts US & Canada economic events and earnings to Slack
 
 Economic Calendar: Claude API with web search
-Earnings: Direct Nasdaq API (deterministic, no AI)
+Earnings: Nasdaq API, cross-checked with TradingView (deterministic, no AI)
 """
 
 import os
@@ -50,6 +50,19 @@ WATCHLIST = set(WATCHLIST_US + WATCHLIST_CAD)
 # Earnings config
 MIN_MARKET_CAP = 1_000_000_000  # $1B
 MAX_PER_SECTION = 6
+
+# TradingView scanner - second earnings source. Adds companies Nasdaq misses, and
+# drops Nasdaq listings for companies TradingView shows have ALREADY reported this
+# quarter (Nasdaq's Zacks dates are sometimes algorithmic estimates, e.g. SPCX
+# listed Nov 3 but actually reported Oct 20). If both say "upcoming" but on
+# different days, Nasdaq's date is kept - TradingView was wrong on those (KALU, CVBF).
+TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/america/scan"
+TV_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "CBOE"}
+TV_COLUMNS = ["name", "exchange", "type", "typespecs", "market_cap_basic",
+              "earnings_release_next_trading_date_fq", "earnings_release_next_time",
+              "earnings_release_trading_date_fq"]
+TV_TIME_LABELS = {-1: "time-pre-market", 1: "time-after-hours"}  # 0 = not supplied
+REPORTED_LOOKBACK_DAYS = 45  # a report this recent means this quarter is already out
 
 # ============= LOGGING =============
 logging.basicConfig(
@@ -202,7 +215,7 @@ def load_from_cache() -> dict | None:
     return None
 
 
-# ============= EARNINGS (Nasdaq API - deterministic) =============
+# ============= EARNINGS (Nasdaq API + TradingView cross-check - deterministic) =============
 def parse_market_cap(cap_str: str) -> float:
     """Parse Nasdaq market cap string like '$1,234,567,890' to float."""
     if not cap_str or cap_str == "N/A" or cap_str == "":
@@ -213,9 +226,107 @@ def parse_market_cap(cap_str: str) -> float:
         return 0.0
 
 
+def _tv_scan(filters: list) -> dict:
+    """Run a TradingView scanner query -> {ticker: fields} for US-listed common stocks / ADRs."""
+    response = requests.post(
+        TRADINGVIEW_SCAN_URL,
+        json={"markets": ["america"], "columns": TV_COLUMNS, "filter": filters,
+              "range": [0, 3000], "ignore_unknown_fields": True},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    stocks = {}
+    for row in response.json().get("data") or []:
+        d = dict(zip(TV_COLUMNS, row["d"]))
+        if d["exchange"] not in TV_EXCHANGES or d["type"] not in ("stock", "dr"):
+            continue
+        if "preferred" in (d["typespecs"] or []):
+            continue
+        ticker = (d["name"] or "").upper()
+        # Same ticker on two listings: keep the larger
+        if ticker not in stocks or (d["market_cap_basic"] or 0) > (stocks[ticker]["market_cap_basic"] or 0):
+            stocks[ticker] = d
+    return stocks
+
+
+def _tv_date(ts) -> str | None:
+    """TradingView trading-date timestamp (UTC midnight) -> 'YYYY-MM-DD'."""
+    if ts is None:
+        return None
+    return (datetime(1970, 1, 1) + timedelta(seconds=int(ts))).strftime("%Y-%m-%d")
+
+
+@retry_with_backoff(max_retries=3, base_delay=2, exceptions=(requests.RequestException,))
+def fetch_tradingview_earnings(date_str: str, nasdaq_tickers: list[str]) -> tuple[dict, dict]:
+    """TradingView's earnings dates.
+
+    Returns (reporting, last_reported):
+      reporting     - {ticker: fields} for companies TradingView says report on date_str
+      last_reported - {ticker: 'YYYY-MM-DD' or None} last report date for the given Nasdaq tickers
+    """
+    start = int((datetime.strptime(date_str, "%Y-%m-%d") - datetime(1970, 1, 1)).total_seconds())
+    reporting = _tv_scan([
+        {"left": "earnings_release_next_trading_date_fq", "operation": "egreater", "right": start},
+        {"left": "earnings_release_next_trading_date_fq", "operation": "eless", "right": start + 86399},
+    ])
+    last_reported = {}
+    if nasdaq_tickers:
+        found = _tv_scan([{"left": "name", "operation": "in_range", "right": nasdaq_tickers}])
+        last_reported = {t: _tv_date(d["earnings_release_trading_date_fq"]) for t, d in found.items()}
+    logger.info(f"TradingView: {len(reporting)} companies report on {date_str}; "
+                f"found {len(last_reported)}/{len(nasdaq_tickers)} Nasdaq tickers")
+    return reporting, last_reported
+
+
+def merge_tradingview(rows: list, date_str: str, reporting: dict, last_reported: dict) -> list:
+    """Apply TradingView to Nasdaq's rows.
+
+    - Nasdaq company that TradingView shows already reported this quarter -> dropped
+    - Nasdaq company with no time given -> TradingView's before/after-market time filled in
+    - Company TradingView has for date_str but Nasdaq doesn't -> added (if >= $1B or watchlist)
+    """
+    merged, dropped, added = [], [], []
+    nasdaq_tickers = set()
+    target = datetime.strptime(date_str, "%Y-%m-%d")
+
+    for row in rows:
+        ticker = (row.get("symbol") or "").strip().upper()
+        nasdaq_tickers.add(ticker)
+        last = last_reported.get(ticker)
+        if last and 0 < (target - datetime.strptime(last, "%Y-%m-%d")).days <= REPORTED_LOOKBACK_DAYS:
+            dropped.append(f"{ticker} (already reported {last})")
+            continue
+        time_label = (row.get("time") or "").strip().lower()
+        if ticker in reporting and time_label not in ("time-pre-market", "time-after-hours"):
+            tv_time = TV_TIME_LABELS.get(reporting[ticker]["earnings_release_next_time"])
+            if tv_time:
+                row = {**row, "time": tv_time}
+        merged.append(row)
+
+    for ticker, d in reporting.items():
+        if ticker in nasdaq_tickers:
+            continue
+        market_cap = d["market_cap_basic"] or 0
+        if market_cap < MIN_MARKET_CAP and ticker not in WATCHLIST:
+            continue
+        merged.append({
+            "symbol": ticker,
+            "marketCap": f"${market_cap:,.0f}",
+            "time": TV_TIME_LABELS.get(d["earnings_release_next_time"], "time-not-supplied"),
+        })
+        added.append(ticker)
+
+    if dropped:
+        logger.info(f"Dropped (already reported per TradingView): {', '.join(dropped)}")
+    if added:
+        logger.info(f"Added from TradingView (missing on Nasdaq): {', '.join(added)}")
+    return merged
+
+
 @retry_with_backoff(max_retries=3, base_delay=2, exceptions=(requests.RequestException,))
 def fetch_earnings(date_str: str) -> str:
-    """Fetch earnings from Nasdaq API and format for Slack."""
+    """Fetch earnings from Nasdaq API, cross-check with TradingView, and format for Slack."""
     logger.info(f"Fetching earnings from Nasdaq API for {date_str}")
 
     response = requests.get(
@@ -229,6 +340,18 @@ def fetch_earnings(date_str: str) -> str:
 
     rows = data.get("data", {}).get("rows", [])
     logger.info(f"Nasdaq API returned {len(rows)} companies")
+
+    # Cross-check with TradingView (best effort - Nasdaq alone if TradingView fails)
+    try:
+        candidates = sorted({
+            (row.get("symbol") or "").strip().upper() for row in rows or []
+            if parse_market_cap(row.get("marketCap", "")) >= MIN_MARKET_CAP
+            or (row.get("symbol") or "").strip().upper() in WATCHLIST
+        })
+        reporting, last_reported = fetch_tradingview_earnings(date_str, candidates)
+        rows = merge_tradingview(rows or [], date_str, reporting, last_reported)
+    except Exception as e:
+        logger.warning(f"TradingView earnings check failed - using Nasdaq only: {e}")
 
     if not rows:
         return "*Earnings:*\n• No major earnings scheduled"
