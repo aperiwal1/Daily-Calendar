@@ -42,7 +42,7 @@ NASDAQ_HEADERS = {
 # Priority watchlist tickers to bold in output
 WATCHLIST_US = ["TSLA", "NVDA", "AMZN", "AAPL", "META", "MSFT", "PLTR", "GOOG", "GOOGL",
                 "AMD", "IREN", "SOFI", "NFLX", "MSTR", "BRK.B", "RKLB", "AVGO", "TSM",
-                "MU", "HOOD", "NBIS", "ASTS"]
+                "MU", "HOOD", "NBIS", "ASTS" ,"SPCX"]
 WATCHLIST_CAD = ["ENB", "SHOP", "TD", "RY", "T", "BNS", "BCE", "IAG", "CNQ", "CM",
                  "POW", "BMO", "DOL", "CLS", "PSLV", "WCP", "CSU", "SU", "SCZ", "BN", "CNR"]
 WATCHLIST = set(WATCHLIST_US + WATCHLIST_CAD)
